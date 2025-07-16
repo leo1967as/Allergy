@@ -82,7 +82,7 @@
 
             try {
                 // เรียก API ที่เราสร้างขึ้น
-                const response = await fetch('http://localhost:3000/api/get-all-allergens');
+                const response = await fetch('/api/get-all-allergens');
                 if (!response.ok) {
                     throw new Error('ไม่สามารถดึงข้อมูลจากเซิร์ฟเวอร์ได้');
                 }
