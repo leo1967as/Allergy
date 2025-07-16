@@ -82,7 +82,7 @@ const initializeCacheDb = () => new Promise((resolve, reject) => {
 
 // --- API Endpoints ---
 
-// --- Endpoint สำหรับ Live Search (เวอร์ชันที่รวมการค้นหา Cache) ---
+// --- Endpoint สำหรับ Live Search (เวอร์ชันแก้ไข Logic การค้นหา Cache) ---
 app.post('/api/live-search', ensureDbInitialized, async (req, res) => {
     const { question } = req.body;
     if (!question || question.trim().length < 2) return res.json({ found: false });
@@ -90,31 +90,53 @@ app.post('/api/live-search', ensureDbInitialized, async (req, res) => {
     const searchTerm = question.toLowerCase().trim();
     const likeTerm = `%${searchTerm}%`;
 
-    // ---- 1. ค้นหาใน DB หลักก่อน ----
-    const dbResult = await new Promise(r => db.get(`SELECT * FROM allergens WHERE keywords LIKE ? OR name LIKE ? LIMIT 1`, [likeTerm, likeTerm], (_, row) => r(row)));
-    if (dbResult) {
-        return res.json({
-            found: true,
-            data: {
-                allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
-                name: dbResult.name,
-                aliases: dbResult.keywords.replace(/,/g, ', '),
-                func: dbResult.function,
-                products: dbResult.found_in,
-                source: 'ฐานข้อมูลของเรา'
-            }
+    try {
+        // ---- 1. ค้นหาใน DB หลักก่อน (แบบ LIKE) ----
+        const dbResult = await new Promise((resolve, reject) => {
+            const sql = `SELECT * FROM allergens WHERE keywords LIKE ? OR name LIKE ? LIMIT 1`;
+            db.get(sql, [likeTerm, likeTerm], (err, row) => {
+                if (err) reject(err);
+                else resolve(row || null);
+            });
         });
-    }
 
-    // ---- 2. ถ้าไม่เจอ ให้ค้นหาใน Cache ----
-    const cacheResult = await new Promise(r => cacheDb.get(`SELECT response FROM ai_cache WHERE query LIKE ? LIMIT 1`, [likeTerm], (_, row) => r(row)));
-    if (cacheResult) {
-        console.log(`✅ พบ Cache ที่ใกล้เคียงสำหรับ: "${question}"`);
-        return res.json({ found: true, data: JSON.parse(cacheResult.response) });
-    }
+        if (dbResult) {
+            console.log(`✅ พบใน DB หลักสำหรับ: "${question}"`);
+            return res.json({
+                found: true,
+                data: {
+                    allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
+                    name: dbResult.name,
+                    aliases: dbResult.keywords.replace(/,/g, ', '),
+                    func: dbResult.function,
+                    products: dbResult.found_in,
+                    source: 'ฐานข้อมูลของเรา'
+                }
+            });
+        }
 
-    // ---- 3. ถ้าไม่เจออีก ให้บอก Frontend ว่าไม่เจอ ----
-    res.json({ found: false });
+        // ---- 2. ถ้าไม่เจอ ให้ค้นหาใน Cache (แบบ LIKE) ----
+        const cacheResult = await new Promise((resolve, reject) => {
+            const sql = `SELECT response FROM ai_cache WHERE query LIKE ? LIMIT 1`;
+            cacheDb.get(sql, [likeTerm], (err, row) => {
+                if (err) reject(err);
+                else resolve(row || null);
+            });
+        });
+
+        if (cacheResult) {
+            console.log(`✅ พบ Cache ที่ใกล้เคียงสำหรับ: "${question}"`);
+            return res.json({ found: true, data: JSON.parse(cacheResult.response) });
+        }
+
+        // ---- 3. ถ้าไม่เจอในทั้งสองที่ ----
+        console.log(`⚠️ ไม่พบทั้งใน DB และ Cache สำหรับ: "${question}"`);
+        res.json({ found: false });
+
+    } catch (error) {
+        console.error("Live Search Error:", error);
+        res.status(500).json({ error: "เกิดข้อผิดพลาดในการค้นหา" });
+    }
 });
 
 // --- Endpoint สำหรับค้นหาด้วย AI (และบันทึกลง Cache) ---
