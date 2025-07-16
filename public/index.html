@@ -41,20 +41,6 @@
         const searchBox = document.getElementById('search-box');
         const resultContainer = document.getElementById('result-container');
         let debounceTimer;
-        let currentQuery = ''; // <-- ตัวแปรใหม่สำหรับเก็บคำค้นหาปัจจุบัน
-        const findInClientCache = (query) => {
-            const cachedItem = localStorage.getItem(query.toLowerCase().trim());
-            return cachedItem ? JSON.parse(cachedItem) : null;
-        };
-
-        const saveToClientCache = (query, data) => {
-            const dataToCache = { 
-                ...data, 
-                source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', 
-                allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' 
-            };
-            localStorage.setItem(query.toLowerCase().trim(), JSON.stringify(dataToCache));
-        };
 
         const debounce = (func, delay) => {
             return function(...args) {
@@ -63,36 +49,38 @@
             };
         };
  // --- ฟังก์ชันใหม่! สำหรับลบ Cache ---
-        const deleteClientCache = async (queryToDelete) => {
-            const normalizedQuery = queryToDelete.toLowerCase().trim();
-            localStorage.removeItem(normalizedQuery); // ลบจาก LocalStorage
-            
-            // ส่งคำสั่งไปลบที่ Server ด้วย (สำหรับกรณี Server-side cache ในอนาคต)
+        const deleteCacheAndReset = async (queryToDelete) => {
             try {
                 await fetch('/api/delete-cache', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ query: normalizedQuery })
+                    body: JSON.stringify({ query: queryToDelete })
                 });
+                alert(`ลบ Cache สำหรับ "${queryToDelete}" เรียบร้อยแล้ว`);
+                searchBox.value = '';
+                resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาค้นหาอีกครั้ง</p>';
+                searchBox.focus();
             } catch (error) {
-                console.error("Failed to send delete request to server:", error);
+                alert('เกิดข้อผิดพลาดในการลบ Cache');
             }
-
-            alert(`ลบ Cache สำหรับ "${queryToDelete}" เรียบร้อยแล้ว`);
-            resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาค้นหาอีกครั้ง</p>';
-            searchBox.value = '';
-            searchBox.focus();
         };
 
-        // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
-        const renderResult = (data,originalQuery) => {
+        // --- แก้ไขฟังก์ชัน renderResult ให้ถูกต้อง ---
+        const renderResult = (data, originalQuery) => {
             let sourceClass = 'source-google';
-            let deleteButtonHTML = ''; // <-- ตัวแปรสำหรับสร้างปุ่มลบ
-            if (data.source.includes('ฐานข้อมูลของเรา')) sourceClass = 'source-db';
-            else if (data.source.includes('Cache')) sourceClass = 'source-cache';deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;;
+            let deleteButtonHTML = '';
+
+            if (data.source.includes('ฐานข้อมูลของเรา')) {
+                sourceClass = 'source-db';
+            } else if (data.source.includes('Cache')) {
+                sourceClass = 'source-cache';
+                // แก้ไข Syntax ที่ผิด: เพิ่ม {} และใช้ originalQuery ที่ถูกต้อง
+                deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;
+            }
             
             return `
                 <div class="source-info ${sourceClass}">
+                    ${deleteButtonHTML}
                     <strong>ที่มา:</strong> ${data.source}
                 </div>
                 <div class="result-item">
@@ -116,9 +104,8 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
                 
-                saveToClientCache(question, data);
-                const finalData = findInClientCache(question);
-                resultContainer.innerHTML = renderResult(finalData);
+                // ไม่ต้องบันทึก Cache ที่นี่แล้ว เพราะ Server จัดการให้
+                resultContainer.innerHTML = renderResult(data, question);
 
             } catch (error) {
                 resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
@@ -127,21 +114,16 @@
             }
         };
 
+        // --- แก้ไข handleLiveSearch ให้เรียก Server เสมอ ---
         const handleLiveSearch = async (question) => {
-            currentQuery = question; // <-- เก็บคำค้นหาปัจจุบัน
             if (question.trim().length < 2) {
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
             }
 
-            const cacheResult = findInClientCache(question);
-            if (cacheResult) {
-                resultContainer.innerHTML = renderResult(cacheResult, question); // <-- ส่ง originalQuery เข้าไปด้วย
-                return;
-            }
-
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
+                // ส่งคำขอไปที่ Server เสมอ เพื่อให้ Server จัดการการค้นหาทั้งใน DB และ Cache
                 const response = await fetch('/api/live-search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -150,12 +132,12 @@
                 const result = await response.json();
 
                 if (result.found) {
-                    resultContainer.innerHTML = renderResult(result.data, question); // <-- ส่ง originalQuery เข้าไปด้วย
+                    // ส่ง question เข้าไปด้วย เพื่อให้ปุ่มลบรู้ว่าต้องลบ query ไหน
+                    resultContainer.innerHTML = renderResult(result.data, question);
                 } else {
-                    // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
                     resultContainer.innerHTML = `
                         <div class="source-info source-google">
-                            ไม่พบ "${question}" ในฐานข้อมูล
+                            ไม่พบ "${question}" ในฐานข้อมูลและ Cache
                         </div>
                         <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
                         <button id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
@@ -166,6 +148,17 @@
                  resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
             }
         };
+
+        searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
+
+        resultContainer.addEventListener('click', (event) => {
+            if (event.target.classList.contains('delete-cache-btn')) {
+                const queryToDelete = event.target.dataset.query;
+                if (queryToDelete && confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ Cache ของ "${queryToDelete}"?`)) {
+                    deleteCacheAndReset(queryToDelete);
+                }
+            }
+        });
         // --- Event Listener ใหม่! สำหรับดักจับการคลิกปุ่มลบ ---
         resultContainer.addEventListener('click', (event) => {
             // ตรวจสอบว่าสิ่งที่ถูกคลิกคือปุ่มลบหรือไม่
