@@ -23,8 +23,9 @@
         #ai-search-btn{width:100%;padding:12px;font-size:1.1rem;font-weight:700;color:#fff;background-color:#f29900;border:none;border-radius:8px;cursor:pointer;transition:background-color .3s;margin-top:1rem}
         #ai-search-btn:hover{background-color:#d18400}
         .loader{border:5px solid #f3f3f3;border-top:5px solid #1a73e8;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:20px auto}
-        @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
-    </style>
+        @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}.delete-cache-btn {background: none;border: 1px solid #d93025;color: #d93025;padding: 4px 8px;font-size: 0.8rem;border-radius: 4px;cursor: pointer;float: right; /* ทำให้ปุ่มไปอยู่ทางขวา */margin-top: -5px;transition: background-color 0.2s, color 0.2s;}
+        .delete-cache-btn:hover {background-color: #d93025;color: white;}
+    </style>_
 </head>
 <body>
     <div id="app-container">
@@ -40,7 +41,7 @@
         const searchBox = document.getElementById('search-box');
         const resultContainer = document.getElementById('result-container');
         let debounceTimer;
-
+        let currentQuery = ''; // <-- ตัวแปรใหม่สำหรับเก็บคำค้นหาปัจจุบัน
         const findInClientCache = (query) => {
             const cachedItem = localStorage.getItem(query.toLowerCase().trim());
             return cachedItem ? JSON.parse(cachedItem) : null;
@@ -61,12 +62,34 @@
                 debounceTimer = setTimeout(() => func.apply(this, args), delay);
             };
         };
+ // --- ฟังก์ชันใหม่! สำหรับลบ Cache ---
+        const deleteClientCache = async (queryToDelete) => {
+            const normalizedQuery = queryToDelete.toLowerCase().trim();
+            localStorage.removeItem(normalizedQuery); // ลบจาก LocalStorage
+            
+            // ส่งคำสั่งไปลบที่ Server ด้วย (สำหรับกรณี Server-side cache ในอนาคต)
+            try {
+                await fetch('/api/delete-cache', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: normalizedQuery })
+                });
+            } catch (error) {
+                console.error("Failed to send delete request to server:", error);
+            }
+
+            alert(`ลบ Cache สำหรับ "${queryToDelete}" เรียบร้อยแล้ว`);
+            resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาค้นหาอีกครั้ง</p>';
+            searchBox.value = '';
+            searchBox.focus();
+        };
 
         // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
         const renderResult = (data) => {
             let sourceClass = 'source-google';
+            let deleteButtonHTML = ''; // <-- ตัวแปรสำหรับสร้างปุ่มลบ
             if (data.source.includes('ฐานข้อมูลของเรา')) sourceClass = 'source-db';
-            else if (data.source.includes('Cache')) sourceClass = 'source-cache';
+            else if (data.source.includes('Cache')) sourceClass = 'source-cache';deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;;
             
             return `
                 <div class="source-info ${sourceClass}">
@@ -105,6 +128,7 @@
         };
 
         const handleLiveSearch = async (question) => {
+            currentQuery = question; // <-- เก็บคำค้นหาปัจจุบัน
             if (question.trim().length < 2) {
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
@@ -112,7 +136,7 @@
 
             const cacheResult = findInClientCache(question);
             if (cacheResult) {
-                resultContainer.innerHTML = renderResult(cacheResult);
+                resultContainer.innerHTML = renderResult(cacheResult, question); // <-- ส่ง originalQuery เข้าไปด้วย
                 return;
             }
 
@@ -126,7 +150,7 @@
                 const result = await response.json();
 
                 if (result.found) {
-                    resultContainer.innerHTML = renderResult(result.data);
+                    resultContainer.innerHTML = renderResult(result.data, question); // <-- ส่ง originalQuery เข้าไปด้วย
                 } else {
                     // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
                     resultContainer.innerHTML = `
@@ -142,7 +166,16 @@
                  resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
             }
         };
-
+        // --- Event Listener ใหม่! สำหรับดักจับการคลิกปุ่มลบ ---
+        resultContainer.addEventListener('click', (event) => {
+            // ตรวจสอบว่าสิ่งที่ถูกคลิกคือปุ่มลบหรือไม่
+            if (event.target.classList.contains('delete-cache-btn')) {
+                const queryToDelete = event.target.dataset.query;
+                if (queryToDelete && confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ Cache ของ "${queryToDelete}"?`)) {
+                    deleteClientCache(queryToDelete);
+                }
+            }
+        });
         searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
     </script>
 </body>

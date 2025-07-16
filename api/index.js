@@ -182,5 +182,31 @@ app.get('/api/get-all-allergens', ensureDbInitialized, (req, res) => {
     });
 });
 
+// --- Endpoint ใหม่! สำหรับลบ Cache ---
+app.post('/api/delete-cache', ensureDbInitialized, async (req, res) => {
+    const { query } = req.body;
+    if (!query) {
+        return res.status(400).json({ error: "Query is required to delete cache." });
+    }
+
+    const searchTerm = query.toLowerCase().trim();
+    const sql = `DELETE FROM ai_cache WHERE query = ?`;
+
+    cacheDb.run(sql, [searchTerm], function(err) {
+        if (err) {
+            console.error("❌ (Cache) Error deleting cache:", err.message);
+            return res.status(500).json({ error: "Failed to delete cache." });
+        }
+        
+        // this.changes จะบอกว่ามีแถวที่ถูกลบไปหรือไม่
+        if (this.changes > 0) {
+            console.log(`🗑️ (Cache) ลบ Cache สำหรับคำค้นหา "${searchTerm}" เรียบร้อย!`);
+            res.json({ success: true, message: `Cache for "${searchTerm}" deleted.` });
+        } else {
+            res.json({ success: false, message: `No cache found for "${searchTerm}".` });
+        }
+    });
+});
+
 // Export a single handler for Vercel
 export default app;
