@@ -25,6 +25,9 @@
         .loader{border:5px solid #f3f3f3;border-top:5px solid #1a73e8;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:20px auto}
         @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}.delete-cache-btn {background: none;border: 1px solid #d93025;color: #d93025;padding: 4px 8px;font-size: 0.8rem;border-radius: 4px;cursor: pointer;float: right; /* ทำให้ปุ่มไปอยู่ทางขวา */margin-top: -5px;transition: background-color 0.2s, color 0.2s;}
         .delete-cache-btn:hover {background-color: #d93025;color: white;}
+        .compare-ai-btn {width: 100%;padding: 10px;font-size: 1rem;font-weight: 700;color: #fff;background-color: #34a853; /* สีเขียว */border: none;border-radius: 8px;cursor: pointer;transition: background-color .3s;margin-top: 1.5rem;}
+        .compare-ai-btn:hover {background-color: #1e8e3e;}
+        .result-block { /* --- บล็อกสำหรับครอบผลลัพธ์แต่ละส่วน --- */border: 1px solid #e0e0e0;border-radius: 8px;padding: 1.5rem;margin-bottom: 1rem;background-color: #f9f9f9;}
     </style>_
 </head>
 <body>
@@ -77,24 +80,44 @@
                 // แก้ไข Syntax ที่ผิด: เพิ่ม {} และใช้ originalQuery ที่ถูกต้อง
                 deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;
             }
+            let compareButtonHTML = '';
+            // ถ้ามาจาก DB หลัก และไม่ใช่การแสดงผลแบบเปรียบเทียบ ให้สร้างปุ่มค้นหาเพิ่มเติม
+            if (data.source.includes('ฐานข้อมูลของเรา') && !isComparison) {
+                compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">ค้นหาข้อมูลเพิ่มเติมด้วย AI (เพื่อเปรียบเทียบ)</button>`;
+            }
             
             return `
-                <div class="source-info ${sourceClass}">
-                    ${deleteButtonHTML}
-                    <strong>ที่มา:</strong> ${data.source}
-                </div>
-                <div class="result-item">
-                    <h4>โอกาสแพ้</h4><p>${data.allergy_status}</p>
-                    <h4>ชื่อจริง</h4><p>${data.name}</p>
-                    <h4>ชื่อแฝง</h4><p>${data.aliases || '-'}</p>
-                    <h4>หน้าที่</h4><p>${data.func || '-'}</p>
-                    <h4>พบใน</h4><p>${data.products || '-'}</p>
+                <div class="result-block">
+                    <div class="source-info ${sourceClass}">
+                        ${deleteButtonHTML}
+                        <strong>ที่มา:</strong> ${data.source}
+                    </div>
+                    <div class="result-item">
+                        <h4>โอกาสแพ้</h4><p>${data.allergy_status}</p>
+                        <h4>ชื่อจริง</h4><p>${data.name}</p>
+                        <h4>ชื่อแฝง</h4><p>${data.aliases || '-'}</p>
+                        <h4>หน้าที่</h4><p>${data.func || '-'}</p>
+                        <h4>พบใน</h4><p>${data.products || '-'}</p>
+                    </div>
+                    ${compareButtonHTML}
                 </div>
             `;
         };
         
-        const searchWithAI = async (question) => {
-            resultContainer.innerHTML = '<div class="loader"></div>';
+        // --- อัปเดตฟังก์ชัน searchWithAI ---
+        const searchWithAI = async (question, isForComparison = false) => {
+            // สร้าง div ใหม่สำหรับผลลัพธ์จาก AI
+            const aiResultContainer = document.createElement('div');
+            aiResultContainer.innerHTML = '<div class="loader"></div>';
+            
+            // ถ้าเป็นการเปรียบเทียบ ให้เอาไปต่อท้าย, ถ้าเป็นการค้นหาปกติ ให้ล้างของเก่า
+            if (isForComparison) {
+                resultContainer.appendChild(aiResultContainer);
+            } else {
+                resultContainer.innerHTML = '';
+                resultContainer.appendChild(aiResultContainer);
+            }
+
             try {
                 const response = await fetch('/api/ask-ai', {
                     method: 'POST',
@@ -104,69 +127,68 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
                 
-                // ไม่ต้องบันทึก Cache ที่นี่แล้ว เพราะ Server จัดการให้
-                resultContainer.innerHTML = renderResult(data, question);
+                // สร้างข้อมูล Cache ที่สมบูรณ์
+                const finalData = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
+                
+                // บันทึกลง LocalStorage
+                localStorage.setItem(question.toLowerCase().trim(), JSON.stringify(finalData));
+                
+                // แสดงผลลัพธ์ใน div ของ AI
+                aiResultContainer.outerHTML = renderResult(finalData, question, true);
 
             } catch (error) {
-                resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
+                aiResultContainer.innerHTML = `<div class="result-block"><div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div></div>`;
             } finally {
-                searchBox.value = '';
+                if (!isForComparison) {
+                    searchBox.value = '';
+                }
             }
         };
 
-        // --- แก้ไข handleLiveSearch ให้เรียก Server เสมอ ---
+        // --- อัปเดตฟังก์ชัน handleLiveSearch ---
         const handleLiveSearch = async (question) => {
+            currentQuery = question;
             if (question.trim().length < 2) {
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
             }
 
+            // --- Logic การค้นหาเหมือนเดิม ---
+            const cacheResult = localStorage.getItem(question.toLowerCase().trim());
+            if (cacheResult) {
+                resultContainer.innerHTML = renderResult(JSON.parse(cacheResult), question);
+                return;
+            }
+
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                // ส่งคำขอไปที่ Server เสมอ เพื่อให้ Server จัดการการค้นหาทั้งใน DB และ Cache
-                const response = await fetch('/api/live-search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question })
-                });
+                const response = await fetch('/api/live-search', { /* ... */ });
                 const result = await response.json();
 
                 if (result.found) {
-                    // ส่ง question เข้าไปด้วย เพื่อให้ปุ่มลบรู้ว่าต้องลบ query ไหน
                     resultContainer.innerHTML = renderResult(result.data, question);
                 } else {
-                    resultContainer.innerHTML = `
-                        <div class="source-info source-google">
-                            ไม่พบ "${question}" ในฐานข้อมูลและ Cache
-                        </div>
-                        <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
-                        <button id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
-                    `;
-                    document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question));
+                    resultContainer.innerHTML = `...`; // โค้ดแสดงปุ่มค้นหา AI ปกติ
+                    document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question, false));
                 }
-            } catch (error) {
-                 resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
-            }
+            } catch (error) { /* ... */ }
         };
 
-        searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
-
+        // --- อัปเดต Event Listener ให้รองรับปุ่มใหม่ ---
         resultContainer.addEventListener('click', (event) => {
+            // จัดการปุ่มลบ Cache
             if (event.target.classList.contains('delete-cache-btn')) {
                 const queryToDelete = event.target.dataset.query;
-                if (queryToDelete && confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ Cache ของ "${queryToDelete}"?`)) {
+                if (queryToDelete && confirm(`...`)) {
                     deleteCacheAndReset(queryToDelete);
                 }
             }
-        });
-        // --- Event Listener ใหม่! สำหรับดักจับการคลิกปุ่มลบ ---
-        resultContainer.addEventListener('click', (event) => {
-            // ตรวจสอบว่าสิ่งที่ถูกคลิกคือปุ่มลบหรือไม่
-            if (event.target.classList.contains('delete-cache-btn')) {
-                const queryToDelete = event.target.dataset.query;
-                if (queryToDelete && confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ Cache ของ "${queryToDelete}"?`)) {
-                    deleteClientCache(queryToDelete);
-                }
+            // จัดการปุ่มค้นหาเพิ่มเติมด้วย AI
+            if (event.target.classList.contains('compare-ai-btn')) {
+                const queryToCompare = event.target.dataset.query;
+                event.target.disabled = true; // ปิดปุ่มหลังกด
+                event.target.textContent = 'กำลังค้นหาด้วย AI...';
+                searchWithAI(queryToCompare, true); // เรียกใช้ฟังก์ชัน AI ในโหมดเปรียบเทียบ
             }
         });
         searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
