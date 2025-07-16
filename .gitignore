@@ -1,0 +1,21 @@
+# Dependency directory
+# โฟลเดอร์ที่เก็บ library ทั้งหมดที่เราติดตั้งมา ไม่ควรนำขึ้นไปเพราะมีขนาดใหญ่มาก
+/node_modules
+
+# Environment variables file
+# ไฟล์ที่เก็บข้อมูลลับสุดยอด (API Keys) ห้ามนำขึ้นไปเด็ดขาด!
+.env
+
+# Database files
+# ไฟล์ฐานข้อมูลที่ถูกสร้างขึ้นระหว่างการทำงาน ไม่ควรเก็บใน Git
+# เพราะมันจะเปลี่ยนแปลงตลอดเวลา
+*.db
+
+# Log files
+# ไฟล์ Log ต่างๆ (ถ้ามี)
+*.log
+
+# OS generated files
+# ไฟล์ขยะที่ระบบปฏิบัติการสร้างขึ้น
+.DS_Store
+Thumbs.db
