@@ -85,7 +85,7 @@
         };
 
         // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
-        const renderResult = (data) => {
+        const renderResult = (data,originalQuery) => {
             let sourceClass = 'source-google';
             let deleteButtonHTML = ''; // <-- ตัวแปรสำหรับสร้างปุ่มลบ
             if (data.source.includes('ฐานข้อมูลของเรา')) sourceClass = 'source-db';
