@@ -51,14 +51,17 @@
                 debounceTimer = setTimeout(() => func.apply(this, args), delay);
             };
         };
- // --- ฟังก์ชันใหม่! สำหรับลบ Cache ---
+
         const deleteCacheAndReset = async (queryToDelete) => {
+            // เราจะใช้ Logic การลบ Cache ฝั่ง Server ที่เราเคยทำไว้
             try {
                 await fetch('/api/delete-cache', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: queryToDelete })
                 });
+                // ลบจาก LocalStorage ด้วย (ถ้ามี)
+                localStorage.removeItem(queryToDelete.toLowerCase().trim());
                 alert(`ลบ Cache สำหรับ "${queryToDelete}" เรียบร้อยแล้ว`);
                 searchBox.value = '';
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาค้นหาอีกครั้ง</p>';
@@ -68,22 +71,21 @@
             }
         };
 
-        // --- แก้ไขฟังก์ชัน renderResult ให้ถูกต้อง ---
-        const renderResult = (data, originalQuery) => {
+        // --- แก้ไข: เพิ่ม Parameter 'isComparison' ---
+        const renderResult = (data, originalQuery, isComparison = false) => {
             let sourceClass = 'source-google';
             let deleteButtonHTML = '';
+            let compareButtonHTML = '';
 
             if (data.source.includes('ฐานข้อมูลของเรา')) {
                 sourceClass = 'source-db';
+                // ถ้ามาจาก DB หลัก และไม่ใช่การแสดงผลแบบเปรียบเทียบ ให้สร้างปุ่มค้นหาเพิ่มเติม
+                if (!isComparison) {
+                    compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">ค้นหาข้อมูลเพิ่มเติมด้วย AI (เพื่อเปรียบเทียบ)</button>`;
+                }
             } else if (data.source.includes('Cache')) {
                 sourceClass = 'source-cache';
-                // แก้ไข Syntax ที่ผิด: เพิ่ม {} และใช้ originalQuery ที่ถูกต้อง
                 deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;
-            }
-            let compareButtonHTML = '';
-            // ถ้ามาจาก DB หลัก และไม่ใช่การแสดงผลแบบเปรียบเทียบ ให้สร้างปุ่มค้นหาเพิ่มเติม
-            if (data.source.includes('ฐานข้อมูลของเรา') && !isComparison) {
-                compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">ค้นหาข้อมูลเพิ่มเติมด้วย AI (เพื่อเปรียบเทียบ)</button>`;
             }
             
             return `
@@ -104,13 +106,10 @@
             `;
         };
         
-        // --- อัปเดตฟังก์ชัน searchWithAI ---
         const searchWithAI = async (question, isForComparison = false) => {
-            // สร้าง div ใหม่สำหรับผลลัพธ์จาก AI
             const aiResultContainer = document.createElement('div');
             aiResultContainer.innerHTML = '<div class="loader"></div>';
             
-            // ถ้าเป็นการเปรียบเทียบ ให้เอาไปต่อท้าย, ถ้าเป็นการค้นหาปกติ ให้ล้างของเก่า
             if (isForComparison) {
                 resultContainer.appendChild(aiResultContainer);
             } else {
@@ -127,13 +126,10 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
                 
-                // สร้างข้อมูล Cache ที่สมบูรณ์
                 const finalData = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
-                
-                // บันทึกลง LocalStorage
                 localStorage.setItem(question.toLowerCase().trim(), JSON.stringify(finalData));
                 
-                // แสดงผลลัพธ์ใน div ของ AI
+                // ส่ง true เข้าไปใน isComparison เพื่อไม่ให้สร้างปุ่มเปรียบเทียบซ้ำ
                 aiResultContainer.outerHTML = renderResult(finalData, question, true);
 
             } catch (error) {
@@ -145,52 +141,55 @@
             }
         };
 
-        // --- อัปเดตฟังก์ชัน handleLiveSearch ---
         const handleLiveSearch = async (question) => {
-            currentQuery = question;
             if (question.trim().length < 2) {
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
             }
 
-            // --- Logic การค้นหาเหมือนเดิม ---
-            const cacheResult = localStorage.getItem(question.toLowerCase().trim());
-            if (cacheResult) {
-                resultContainer.innerHTML = renderResult(JSON.parse(cacheResult), question);
-                return;
-            }
-
+            // เราจะใช้ Logic การค้นหาจาก Server ทั้งหมด
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                const response = await fetch('/api/live-search', { /* ... */ });
+                const response = await fetch('/api/live-search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
                 const result = await response.json();
 
                 if (result.found) {
-                    resultContainer.innerHTML = renderResult(result.data, question);
+                    // ส่ง false เข้าไปใน isComparison สำหรับการแสดงผลครั้งแรก
+                    resultContainer.innerHTML = renderResult(result.data, question, false);
                 } else {
-                    resultContainer.innerHTML = `...`; // โค้ดแสดงปุ่มค้นหา AI ปกติ
+                    resultContainer.innerHTML = `
+                        <div class="source-info source-google">
+                            ไม่พบ "${question}" ในฐานข้อมูลและ Cache
+                        </div>
+                        <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
+                        <button id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
+                    `;
                     document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question, false));
                 }
-            } catch (error) { /* ... */ }
+            } catch (error) {
+                 resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
+            }
         };
 
-        // --- อัปเดต Event Listener ให้รองรับปุ่มใหม่ ---
         resultContainer.addEventListener('click', (event) => {
-            // จัดการปุ่มลบ Cache
             if (event.target.classList.contains('delete-cache-btn')) {
                 const queryToDelete = event.target.dataset.query;
-                if (queryToDelete && confirm(`...`)) {
+                if (queryToDelete && confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบ Cache ของ "${queryToDelete}"?`)) {
                     deleteCacheAndReset(queryToDelete);
                 }
             }
-            // จัดการปุ่มค้นหาเพิ่มเติมด้วย AI
             if (event.target.classList.contains('compare-ai-btn')) {
                 const queryToCompare = event.target.dataset.query;
-                event.target.disabled = true; // ปิดปุ่มหลังกด
+                event.target.disabled = true;
                 event.target.textContent = 'กำลังค้นหาด้วย AI...';
-                searchWithAI(queryToCompare, true); // เรียกใช้ฟังก์ชัน AI ในโหมดเปรียบเทียบ
+                searchWithAI(queryToCompare, true);
             }
         });
+
         searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
     </script>
 </body>
