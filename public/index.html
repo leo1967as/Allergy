@@ -103,6 +103,7 @@
             `;
         };
         
+       // --- แก้ไขฟังก์ชัน searchWithAI ---
         const searchWithAI = async (question, isForComparison = false) => {
             let targetContainer;
             if (isForComparison) {
@@ -120,15 +121,26 @@
             targetContainer.innerHTML = '<div class="loader"></div>';
 
             try {
+                // --- ส่วนที่แก้ไข: เพิ่ม method, headers, body กลับเข้ามา ---
                 const response = await fetch('/api/ask-ai', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
                     body: JSON.stringify({ question })
                 });
+                // ----------------------------------------------------
+
                 const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
+                if (!response.ok) {
+                    // ถ้าเกิด Error 500 จากฝั่ง Server, data.error จะมีข้อความ
+                    throw new Error(data.error || 'เกิดข้อผิดพลาดในการสื่อสารกับ AI');
+                }
                 
-                const finalHTML = renderResult(data, question, true);
+                const finalData = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
+                localStorage.setItem(question.toLowerCase().trim(), JSON.stringify(finalData));
+                
+                const finalHTML = renderResult(finalData, question, true);
                 if(isForComparison) {
                     targetContainer.outerHTML = `<div id="ai-comparison-block">${finalHTML}</div>`;
                 } else {
