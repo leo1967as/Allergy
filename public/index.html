@@ -29,8 +29,7 @@
 <body>
     <div id="app-container">
         <h1>ค้นหาสารก่อภูมิแพ้</h1>
-                <a href="list.html" style="display: block; text-align: center; margin-bottom: 1.5rem;">ดูรายการสารทั้งหมด →</a>
-
+        <a href="/list.html" style="display: block; text-align: center; margin-bottom: 1.5rem;">ดูรายการสารทั้งหมด →</a>
         <input type="text" id="search-box" placeholder="เริ่มพิมพ์เพื่อค้นหา...">
         <div id="result-container">
             <p style="text-align:center; color: #555;">ผลการค้นหาจะแสดงที่นี่...</p>
@@ -38,8 +37,6 @@
     </div>
 
     <script>
-        // --- โค้ด JavaScript ทั้งหมดเหมือนกับเวอร์ชัน Client-Side Cache ที่เราคุยกันล่าสุด ---
-        // --- แต่มีการแก้ไข URL ใน fetch ให้เป็นแบบ Relative Path ---
         const searchBox = document.getElementById('search-box');
         const resultContainer = document.getElementById('result-container');
         let debounceTimer;
@@ -50,7 +47,11 @@
         };
 
         const saveToClientCache = (query, data) => {
-            const dataToCache = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
+            const dataToCache = { 
+                ...data, 
+                source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', 
+                allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' 
+            };
             localStorage.setItem(query.toLowerCase().trim(), JSON.stringify(dataToCache));
         };
 
@@ -61,17 +62,29 @@
             };
         };
 
+        // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
         const renderResult = (data) => {
             let sourceClass = 'source-google';
             if (data.source.includes('ฐานข้อมูลของเรา')) sourceClass = 'source-db';
             else if (data.source.includes('Cache')) sourceClass = 'source-cache';
-            return `...`; // โค้ดส่วน render เหมือนเดิม
+            
+            return `
+                <div class="source-info ${sourceClass}">
+                    <strong>ที่มา:</strong> ${data.source}
+                </div>
+                <div class="result-item">
+                    <h4>โอกาสแพ้</h4><p>${data.allergy_status}</p>
+                    <h4>ชื่อจริง</h4><p>${data.name}</p>
+                    <h4>ชื่อแฝง</h4><p>${data.aliases || '-'}</p>
+                    <h4>หน้าที่</h4><p>${data.func || '-'}</p>
+                    <h4>พบใน</h4><p>${data.products || '-'}</p>
+                </div>
+            `;
         };
         
         const searchWithAI = async (question) => {
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                // --- แก้ไข URL ---
                 const response = await fetch('/api/ask-ai', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -105,7 +118,6 @@
 
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                // --- แก้ไข URL ---
                 const response = await fetch('/api/live-search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -116,7 +128,14 @@
                 if (result.found) {
                     resultContainer.innerHTML = renderResult(result.data);
                 } else {
-                    resultContainer.innerHTML = `...`; // โค้ดแสดงปุ่มค้นหา AI เหมือนเดิม
+                    // --- แก้ไข: นำโค้ดที่สมบูรณ์กลับมา ---
+                    resultContainer.innerHTML = `
+                        <div class="source-info source-google">
+                            ไม่พบ "${question}" ในฐานข้อมูล
+                        </div>
+                        <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
+                        <button id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
+                    `;
                     document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question));
                 }
             } catch (error) {
