@@ -71,7 +71,7 @@
             }
         };
 
-        // --- แก้ไข: เพิ่ม Parameter 'isComparison' ---
+        // --- อัปเดตฟังก์ชัน renderResult ---
         const renderResult = (data, originalQuery, isComparison = false) => {
             let sourceClass = 'source-google';
             let deleteButtonHTML = '';
@@ -79,17 +79,16 @@
 
             if (data.source.includes('ฐานข้อมูลของเรา')) {
                 sourceClass = 'source-db';
-                // ถ้ามาจาก DB หลัก และไม่ใช่การแสดงผลแบบเปรียบเทียบ ให้สร้างปุ่มค้นหาเพิ่มเติม
-                if (!isComparison) {
-                    compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">ค้นหาข้อมูลเพิ่มเติมด้วย AI (เพื่อเปรียบเทียบ)</button>`;
-                }
+                // เปลี่ยนปุ่มเป็น "อัปเดตข้อมูล" เสมอ
+                compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">อัปเดตข้อมูลเปรียบเทียบจาก AI</button>`;
             } else if (data.source.includes('Cache')) {
                 sourceClass = 'source-cache';
                 deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;
             }
             
-            return `
-                <div class="result-block">
+            // สร้าง HTML สำหรับบล็อกผลลัพธ์
+            const resultBlock = `
+                <div class="result-block" id="result-block-${sourceClass}">
                     <div class="source-info ${sourceClass}">
                         ${deleteButtonHTML}
                         <strong>ที่มา:</strong> ${data.source}
@@ -104,39 +103,52 @@
                     ${compareButtonHTML}
                 </div>
             `;
+            return resultBlock;
         };
         
+        // --- อัปเดตฟังก์ชัน searchWithAI ---
         const searchWithAI = async (question, isForComparison = false) => {
-            const aiResultContainer = document.createElement('div');
-            aiResultContainer.innerHTML = '<div class="loader"></div>';
-            
+            let targetContainer;
             if (isForComparison) {
-                resultContainer.appendChild(aiResultContainer);
+                // ถ้ามีบล็อกของ AI อยู่แล้ว ให้แทนที่, ถ้าไม่มี ให้สร้างใหม่
+                targetContainer = document.getElementById('ai-comparison-block');
+                if (!targetContainer) {
+                    targetContainer = document.createElement('div');
+                    targetContainer.id = 'ai-comparison-block';
+                    resultContainer.appendChild(targetContainer);
+                }
             } else {
-                resultContainer.innerHTML = '';
-                resultContainer.appendChild(aiResultContainer);
+                resultContainer.innerHTML = ''; // ล้างทั้งหมดถ้าเป็นการค้นหาปกติ
+                targetContainer = resultContainer;
             }
+            
+            targetContainer.innerHTML = '<div class="loader"></div>';
 
             try {
-                const response = await fetch('/api/ask-ai', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question })
-                });
+                const response = await fetch('/api/ask-ai', { /* ... */ });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
                 
                 const finalData = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
                 localStorage.setItem(question.toLowerCase().trim(), JSON.stringify(finalData));
                 
-                // ส่ง true เข้าไปใน isComparison เพื่อไม่ให้สร้างปุ่มเปรียบเทียบซ้ำ
-                aiResultContainer.outerHTML = renderResult(finalData, question, true);
+                // แสดงผลลัพธ์ใน container ที่ถูกต้อง
+                const finalHTML = renderResult(finalData, question, true);
+                if(isForComparison) {
+                    targetContainer.outerHTML = `<div id="ai-comparison-block">${finalHTML}</div>`;
+                } else {
+                    targetContainer.innerHTML = finalHTML;
+                }
 
             } catch (error) {
-                aiResultContainer.innerHTML = `<div class="result-block"><div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div></div>`;
+                targetContainer.innerHTML = `<div class="result-block"><div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div></div>`;
             } finally {
-                if (!isForComparison) {
-                    searchBox.value = '';
+                if (!isForComparison) searchBox.value = '';
+                // เปิดใช้งานปุ่มเปรียบเทียบอีกครั้ง (ถ้ามี)
+                const compareBtn = document.querySelector('.compare-ai-btn');
+                if(compareBtn) {
+                    compareBtn.disabled = false;
+                    compareBtn.textContent = 'อัปเดตข้อมูลเปรียบเทียบจาก AI';
                 }
             }
         };
@@ -159,7 +171,15 @@
 
                 if (result.found) {
                     // ส่ง false เข้าไปใน isComparison สำหรับการแสดงผลครั้งแรก
+                    let finalHTML = renderResult(result.data, question, false);
                     resultContainer.innerHTML = renderResult(result.data, question, false);
+                    const comparisonCache = localStorage.getItem(question.toLowerCase().trim());
+                    if (comparisonCache) {
+                        console.log("Found comparison cache!");
+                        // ถ้่ามี ให้นำมาแสดงต่อท้าย
+                        finalHTML += `<div id="ai-comparison-block">${renderResult(JSON.parse(comparisonCache), question, true)}</div>`;
+                    }
+                                        resultContainer.innerHTML = finalHTML;
                 } else {
                     resultContainer.innerHTML = `
                         <div class="source-info source-google">
@@ -185,7 +205,7 @@
             if (event.target.classList.contains('compare-ai-btn')) {
                 const queryToCompare = event.target.dataset.query;
                 event.target.disabled = true;
-                event.target.textContent = 'กำลังค้นหาด้วย AI...';
+                event.target.textContent = 'กำลังอัปเดตข้อมูล...';
                 searchWithAI(queryToCompare, true);
             }
         });
