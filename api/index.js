@@ -15,7 +15,8 @@ app.use(cors());
 app.use(express.json());
 
 const DB_PATH = path.join('/tmp', 'allergens.db');
-let db;
+const CACHE_DB_PATH = path.join('/tmp', 'cache.db'); // <-- เพิ่ม Path สำหรับ Cache DB
+let db , cacheDb;
 
 const initializeMainDb = () => new Promise((resolve, reject) => {
     if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
@@ -38,13 +39,18 @@ const initializeMainDb = () => new Promise((resolve, reject) => {
 });
 
 const ensureDbInitialized = async (req, res, next) => {
-    if (!db || !db.isReady) {
-        try {
+    try {
+        if (!db || !db.isReady) {
             db = await initializeMainDb();
             db.isReady = true;
-        } catch (error) {
-            return res.status(500).json({ error: "Database initialization failed.", details: error.message });
         }
+        if (!cacheDb || !cacheDb.isReady) {
+            cacheDb = await initializeCacheDb();
+            cacheDb.isReady = true;
+        }
+    } catch (error) {
+        console.error("Failed to initialize databases:", error);
+        return res.status(500).json({ error: "Database initialization failed.", details: error.message });
     }
     next();
 };
@@ -62,36 +68,57 @@ async function generateStructuredAnswer(context, question) {
         return { name: "ไม่สามารถประมวลผลได้", aliases: "-", func: "-", products: "-" };
     }
 }
+// --- เพิ่มฟังก์ชันสำหรับสร้างฐานข้อมูล Cache ---
+const initializeCacheDb = () => new Promise((resolve, reject) => {
+    const newCacheDb = new sqlite3.Database(CACHE_DB_PATH, (err) => {
+        if (err) return reject(err);
+        newCacheDb.run(`CREATE TABLE IF NOT EXISTS ai_cache (query TEXT PRIMARY KEY, response TEXT)`, (err) => {
+            if (err) return reject(err);
+            console.log('Cache DB Initialized in /tmp.');
+            resolve(newCacheDb);
+        });
+    });
+});
 
 // --- API Endpoints ---
 
+// --- Endpoint สำหรับ Live Search (เวอร์ชันที่รวมการค้นหา Cache) ---
 app.post('/api/live-search', ensureDbInitialized, async (req, res) => {
     const { question } = req.body;
     if (!question || question.trim().length < 2) return res.json({ found: false });
 
-    const searchTerm = `%${question.toLowerCase().trim()}%`;
-    const sql = `SELECT * FROM allergens WHERE keywords LIKE ? OR name LIKE ? LIMIT 1`;
-    
-    db.get(sql, [searchTerm, searchTerm], (err, row) => {
-        if (err || !row) {
-            res.json({ found: false });
-        } else {
-            res.json({
-                found: true,
-                data: {
-                    allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
-                    name: row.name,
-                    aliases: row.keywords.replace(/,/g, ', '),
-                    func: row.function,
-                    products: row.found_in,
-                    source: 'ฐานข้อมูลของเรา'
-                }
-            });
-        }
-    });
+    const searchTerm = question.toLowerCase().trim();
+    const likeTerm = `%${searchTerm}%`;
+
+    // ---- 1. ค้นหาใน DB หลักก่อน ----
+    const dbResult = await new Promise(r => db.get(`SELECT * FROM allergens WHERE keywords LIKE ? OR name LIKE ? LIMIT 1`, [likeTerm, likeTerm], (_, row) => r(row)));
+    if (dbResult) {
+        return res.json({
+            found: true,
+            data: {
+                allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
+                name: dbResult.name,
+                aliases: dbResult.keywords.replace(/,/g, ', '),
+                func: dbResult.function,
+                products: dbResult.found_in,
+                source: 'ฐานข้อมูลของเรา'
+            }
+        });
+    }
+
+    // ---- 2. ถ้าไม่เจอ ให้ค้นหาใน Cache ----
+    const cacheResult = await new Promise(r => cacheDb.get(`SELECT response FROM ai_cache WHERE query LIKE ? LIMIT 1`, [likeTerm], (_, row) => r(row)));
+    if (cacheResult) {
+        console.log(`✅ พบ Cache ที่ใกล้เคียงสำหรับ: "${question}"`);
+        return res.json({ found: true, data: JSON.parse(cacheResult.response) });
+    }
+
+    // ---- 3. ถ้าไม่เจออีก ให้บอก Frontend ว่าไม่เจอ ----
+    res.json({ found: false });
 });
 
-app.post('/api/ask-ai', async (req, res) => {
+// --- Endpoint สำหรับค้นหาด้วย AI (และบันทึกลง Cache) ---
+app.post('/api/ask-ai', ensureDbInitialized, async (req, res) => {
     const { question } = req.body;
     console.log(`\n🤖 AI Search สำหรับ: "${question}"`);
 
@@ -104,8 +131,20 @@ app.post('/api/ask-ai', async (req, res) => {
         
         const aiResult = await generateStructuredAnswer(googleContext, question);
         
-        // แก้ไข: ส่งผลลัพธ์จาก AI กลับไปตรงๆ ให้ Frontend จัดการเรื่อง Cache
-        res.json(aiResult);
+        const finalResponse = {
+            ...aiResult,
+            source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)',
+            allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้'
+        };
+
+        // บันทึกลง Cache
+        if (aiResult.name && aiResult.name !== "ไม่สามารถประมวลผลได้" && aiResult.name !== "ไม่พบข้อมูล") {
+            const responseString = JSON.stringify(finalResponse);
+            cacheDb.run(`INSERT OR REPLACE INTO ai_cache (query, response) VALUES (?, ?)`, [question.toLowerCase().trim(), responseString]);
+            console.log(`💾 (Cache) บันทึก Cache สำหรับคำค้นหา "${question}" เรียบร้อย!`);
+        }
+
+        res.json(finalResponse);
 
     } catch (error) {
         console.error("AI Search Error:", error);
