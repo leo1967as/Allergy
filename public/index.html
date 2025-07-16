@@ -3,32 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Search สารก่อภูมิแพ้</title>
+    <title>ค้นหาสารก่อภูมิแพ้</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body{font-family:'Sarabun',sans-serif;background-color:#f0f2f5;color:#333;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;margin:0;padding-top:2rem;padding-bottom:2rem}
+        body{font-family:'Sarabun',sans-serif;background-color:#f0f2f5;color:#333;display:flex;justify-content:center;align-items:flex-start;min-height:100vh;margin:0;padding:2rem 0}
         #app-container{width:90%;max-width:650px;background-color:#fff;padding:2rem;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.1)}
         h1{color:#1a73e8;text-align:center;margin-bottom:1.5rem}
         #search-box{width:100%;padding:14px;font-size:1.1rem;border-radius:8px;border:2px solid #ccc;box-sizing:border-box;transition:border-color .3s}
         #search-box:focus{border-color:#1a73e8;outline:none}
         #result-container{margin-top:1.5rem;min-height:50px;line-height:1.7}
+        .result-block{border:1px solid #e0e0e0;border-radius:8px;padding:1.5rem;margin-bottom:1rem;background-color:#f9f9f9}
         .result-item h4{margin-top:1rem;margin-bottom:.5rem;color:#1a73e8;border-bottom:2px solid #e0e0e0;padding-bottom:.4rem}
-        .result-item p{margin:0 0 .5rem .5rem}
-        .source-info{font-size:.9rem;font-weight:700;padding:.5rem 1rem;border-radius:6px;margin-bottom:1rem;text-align:center}
+        .result-item p{margin:0 0 .5rem .5rem;word-wrap:break-word}
+        .source-info{font-size:.9rem;font-weight:700;padding:.5rem 1rem;border-radius:6px;margin-bottom:1rem;text-align:center;position:relative}
         .source-db{background-color:#e6f4ea;color:#1e8e3e;border:1px solid #a8d5b5}
         .source-google{background-color:#fff0e6;color:#d93025;border:1px solid #f5c2b3}
-        .source-cache{background-color:#e8f0fe;color:#174ea6;border:1px solid #a9c5f5} /* สีใหม่สำหรับ Cache */
-        #ai-search-btn{width:100%;padding:12px;font-size:1.1rem;font-weight:700;color:#fff;background-color:#f29900;border:none;border-radius:8px;cursor:pointer;transition:background-color .3s;margin-top:1rem}
+        .source-cache{background-color:#e8f0fe;color:#174ea6;border:1px solid #a9c5f5}
+        .action-btn{width:100%;padding:10px;font-size:1rem;font-weight:700;color:#fff;border:none;border-radius:8px;cursor:pointer;transition:background-color .3s;margin-top:1.5rem}
+        #ai-search-btn{background-color:#f29900}
         #ai-search-btn:hover{background-color:#d18400}
+        .compare-ai-btn{background-color:#34a853}
+        .compare-ai-btn:hover{background-color:#1e8e3e}
+        .delete-cache-btn{background:0 0;border:1px solid #d93025;color:#d93025;padding:4px 8px;font-size:.8rem;border-radius:4px;cursor:pointer;position:absolute;right:10px;top:50%;transform:translateY(-50%);transition:background-color .2s,color .2s}
+        .delete-cache-btn:hover{background-color:#d93025;color:#fff}
         .loader{border:5px solid #f3f3f3;border-top:5px solid #1a73e8;border-radius:50%;width:40px;height:40px;animation:spin 1s linear infinite;margin:20px auto}
-        @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}.delete-cache-btn {background: none;border: 1px solid #d93025;color: #d93025;padding: 4px 8px;font-size: 0.8rem;border-radius: 4px;cursor: pointer;float: right; /* ทำให้ปุ่มไปอยู่ทางขวา */margin-top: -5px;transition: background-color 0.2s, color 0.2s;}
-        .delete-cache-btn:hover {background-color: #d93025;color: white;}
-        .compare-ai-btn {width: 100%;padding: 10px;font-size: 1rem;font-weight: 700;color: #fff;background-color: #34a853; /* สีเขียว */border: none;border-radius: 8px;cursor: pointer;transition: background-color .3s;margin-top: 1.5rem;}
-        .compare-ai-btn:hover {background-color: #1e8e3e;}
-        .result-block { /* --- บล็อกสำหรับครอบผลลัพธ์แต่ละส่วน --- */border: 1px solid #e0e0e0;border-radius: 8px;padding: 1.5rem;margin-bottom: 1rem;background-color: #f9f9f9;}
-    </style>_
+        @keyframes spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+    </style>
 </head>
 <body>
     <div id="app-container">
@@ -53,15 +55,12 @@
         };
 
         const deleteCacheAndReset = async (queryToDelete) => {
-            // เราจะใช้ Logic การลบ Cache ฝั่ง Server ที่เราเคยทำไว้
             try {
                 await fetch('/api/delete-cache', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ query: queryToDelete })
                 });
-                // ลบจาก LocalStorage ด้วย (ถ้ามี)
-                localStorage.removeItem(queryToDelete.toLowerCase().trim());
                 alert(`ลบ Cache สำหรับ "${queryToDelete}" เรียบร้อยแล้ว`);
                 searchBox.value = '';
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาค้นหาอีกครั้ง</p>';
@@ -71,7 +70,6 @@
             }
         };
 
-        // --- อัปเดตฟังก์ชัน renderResult ---
         const renderResult = (data, originalQuery, isComparison = false) => {
             let sourceClass = 'source-google';
             let deleteButtonHTML = '';
@@ -79,16 +77,16 @@
 
             if (data.source.includes('ฐานข้อมูลของเรา')) {
                 sourceClass = 'source-db';
-                // เปลี่ยนปุ่มเป็น "อัปเดตข้อมูล" เสมอ
-                compareButtonHTML = `<button class="compare-ai-btn" data-query="${originalQuery}">อัปเดตข้อมูลเปรียบเทียบจาก AI</button>`;
+                if (!isComparison) {
+                    compareButtonHTML = `<button class="action-btn compare-ai-btn" data-query="${originalQuery}">ค้นหาข้อมูลเปรียบเทียบจาก AI</button>`;
+                }
             } else if (data.source.includes('Cache')) {
                 sourceClass = 'source-cache';
                 deleteButtonHTML = `<button class="delete-cache-btn" data-query="${originalQuery}">ลบ Cache</button>`;
             }
             
-            // สร้าง HTML สำหรับบล็อกผลลัพธ์
-            const resultBlock = `
-                <div class="result-block" id="result-block-${sourceClass}">
+            return `
+                <div class="result-block">
                     <div class="source-info ${sourceClass}">
                         ${deleteButtonHTML}
                         <strong>ที่มา:</strong> ${data.source}
@@ -103,14 +101,11 @@
                     ${compareButtonHTML}
                 </div>
             `;
-            return resultBlock;
         };
         
-        // --- อัปเดตฟังก์ชัน searchWithAI ---
         const searchWithAI = async (question, isForComparison = false) => {
             let targetContainer;
             if (isForComparison) {
-                // ถ้ามีบล็อกของ AI อยู่แล้ว ให้แทนที่, ถ้าไม่มี ให้สร้างใหม่
                 targetContainer = document.getElementById('ai-comparison-block');
                 if (!targetContainer) {
                     targetContainer = document.createElement('div');
@@ -118,22 +113,22 @@
                     resultContainer.appendChild(targetContainer);
                 }
             } else {
-                resultContainer.innerHTML = ''; // ล้างทั้งหมดถ้าเป็นการค้นหาปกติ
+                resultContainer.innerHTML = '';
                 targetContainer = resultContainer;
             }
             
             targetContainer.innerHTML = '<div class="loader"></div>';
 
             try {
-                const response = await fetch('/api/ask-ai', { /* ... */ });
+                const response = await fetch('/api/ask-ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
                 
-                const finalData = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
-                localStorage.setItem(question.toLowerCase().trim(), JSON.stringify(finalData));
-                
-                // แสดงผลลัพธ์ใน container ที่ถูกต้อง
-                const finalHTML = renderResult(finalData, question, true);
+                const finalHTML = renderResult(data, question, true);
                 if(isForComparison) {
                     targetContainer.outerHTML = `<div id="ai-comparison-block">${finalHTML}</div>`;
                 } else {
@@ -144,7 +139,6 @@
                 targetContainer.innerHTML = `<div class="result-block"><div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div></div>`;
             } finally {
                 if (!isForComparison) searchBox.value = '';
-                // เปิดใช้งานปุ่มเปรียบเทียบอีกครั้ง (ถ้ามี)
                 const compareBtn = document.querySelector('.compare-ai-btn');
                 if(compareBtn) {
                     compareBtn.disabled = false;
@@ -158,8 +152,7 @@
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
             }
-
-            // เราจะใช้ Logic การค้นหาจาก Server ทั้งหมด
+            
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
                 const response = await fetch('/api/live-search', {
@@ -170,23 +163,14 @@
                 const result = await response.json();
 
                 if (result.found) {
-                    // ส่ง false เข้าไปใน isComparison สำหรับการแสดงผลครั้งแรก
-                    let finalHTML = renderResult(result.data, question, false);
                     resultContainer.innerHTML = renderResult(result.data, question, false);
-                    const comparisonCache = localStorage.getItem(question.toLowerCase().trim());
-                    if (comparisonCache) {
-                        console.log("Found comparison cache!");
-                        // ถ้่ามี ให้นำมาแสดงต่อท้าย
-                        finalHTML += `<div id="ai-comparison-block">${renderResult(JSON.parse(comparisonCache), question, true)}</div>`;
-                    }
-                                        resultContainer.innerHTML = finalHTML;
                 } else {
                     resultContainer.innerHTML = `
                         <div class="source-info source-google">
                             ไม่พบ "${question}" ในฐานข้อมูลและ Cache
                         </div>
                         <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
-                        <button id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
+                        <button class="action-btn" id="ai-search-btn">ค้นหาด้วย AI และบันทึกผล</button>
                     `;
                     document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question, false));
                 }
