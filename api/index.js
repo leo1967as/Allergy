@@ -1,15 +1,57 @@
+// File: /api/index.js (สำหรับ Vercel)
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import db from './database.js'; // DB หลัก (allergens.db)
-import { findInCache, saveToCache } from './cache_database.js'; // DB Cache (cache.db)
+import sqlite3 from 'sqlite3';
+import csv from 'csv-parser';
+import fs from 'fs';
+import path from 'path';
 
 const app = express();
-const port = 3000;
 app.use(cors());
 app.use(express.json());
+
+// --- การจัดการฐานข้อมูลสำหรับ Vercel (สร้างในโฟลเดอร์ชั่วคราว /tmp) ---
+const DB_PATH = path.join('/tmp', 'allergens.db');
+let db;
+
+// ฟังก์ชันสำหรับสร้างและ Seed ฐานข้อมูลหลัก
+const initializeMainDb = () => new Promise((resolve, reject) => {
+    // สร้าง DB ใหม่ทุกครั้งที่ฟังก์ชันถูกเรียก (Cold Start)
+    if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+    
+    const newDb = new sqlite3.Database(DB_PATH, (err) => {
+        if (err) return reject(err);
+        
+        newDb.run(`CREATE TABLE allergens (name TEXT UNIQUE, keywords TEXT, function TEXT, found_in TEXT)`, (err) => {
+            if (err) return reject(err);
+
+            fs.createReadStream(path.join(process.cwd(), 'allergens.csv'))
+              .pipe(csv())
+              .on('data', (row) => newDb.run(`INSERT OR IGNORE INTO allergens VALUES (?,?,?,?)`, [row.name, row.keywords, row.function, row.found_in]))
+              .on('end', () => {
+                  console.log('Main DB Initialized in /tmp.');
+                  resolve(newDb);
+              });
+        });
+    });
+});
+
+// Middleware เพื่อให้แน่ใจว่า DB พร้อมใช้งาน
+const ensureDbInitialized = async (req, res, next) => {
+    if (!db) {
+        try {
+            db = await initializeMainDb();
+        } catch (error) {
+            console.error("Failed to initialize database:", error);
+            return res.status(500).json({ error: "Database initialization failed." });
+        }
+    }
+    next();
+};
 
 // --- ฟังก์ชันค้นหาใน DB หลัก (ไม่มีการเปลี่ยนแปลง) ---
 function searchLocalDatabase(question) {
@@ -56,34 +98,31 @@ async function generateStructuredAnswer(context, question) {
 }
 
 // --- Endpoint ใหม่! สำหรับ Live Search ที่มี Logic การ Cache ---
-app.post('/api/live-search', async (req, res) => {
+// Endpoint สำหรับ Live Search
+app.post('/api/live-search', ensureDbInitialized, async (req, res) => {
     const { question } = req.body;
-    
-    // ---- 1. ค้นหาใน DB หลักก่อน ----
-    const dbResult = await searchLocalDatabase(question);
-    if (dbResult) {
-        return res.json({
-            found: true,
-            data: {
-                allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
-                name: dbResult.name,
-                aliases: dbResult.keywords.replace(/,/g, ', '),
-                func: dbResult.function,
-                products: dbResult.found_in,
-                source: 'ฐานข้อมูลของเรา'
-            }
-        });
-        
-    }
-    
-    // ---- 2. ถ้าไม่เจอ ให้ค้นหาใน Cache ----
-    const cacheResult = await findInCache(question);
-    if (cacheResult) {
-        return res.json({ found: true, data: cacheResult });
-    }
+    if (!question || question.trim().length < 2) return res.json({ found: false });
 
-    // ---- 3. ถ้าไม่เจออีก ให้บอก Frontend ว่าไม่เจอ ----
-    res.json({ found: false });
+    const searchTerm = `%${question.toLowerCase().trim()}%`;
+    const sql = `SELECT * FROM allergens WHERE keywords LIKE ? OR name LIKE ? LIMIT 1`;
+    
+    db.get(sql, [searchTerm, searchTerm], (err, row) => {
+        if (err || !row) {
+            res.json({ found: false });
+        } else {
+            res.json({
+                found: true,
+                data: {
+                    allergy_status: 'สารนี้อยู่ในฐานข้อมูลสารก่อภูมิแพ้ของเรา',
+                    name: row.name,
+                    aliases: row.keywords.replace(/,/g, ', '),
+                    func: row.function,
+                    products: row.found_in,
+                    source: 'ฐานข้อมูลของเรา'
+                }
+            });
+        }
+    });
 });
 
 // --- Endpoint สำหรับค้นหาด้วย AI (และบันทึกลง Cache) ---
@@ -122,7 +161,7 @@ app.post('/api/ask-ai', async (req, res) => {
 });
 
 // --- Endpoint ใหม่! สำหรับดึงข้อมูลสารก่อภูมิแพ้ทั้งหมดจากฐานข้อมูลหลัก ---
-app.get('/api/get-all-allergens', (req, res) => {
+app.get('/api/get-all-allergens', ensureDbInitialized, (req, res) => {
     const sql = `SELECT name, keywords FROM allergens ORDER BY name ASC`;
     
     db.all(sql, [], (err, rows) => {

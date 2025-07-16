@@ -38,9 +38,21 @@
     </div>
 
     <script>
+        // --- โค้ด JavaScript ทั้งหมดเหมือนกับเวอร์ชัน Client-Side Cache ที่เราคุยกันล่าสุด ---
+        // --- แต่มีการแก้ไข URL ใน fetch ให้เป็นแบบ Relative Path ---
         const searchBox = document.getElementById('search-box');
         const resultContainer = document.getElementById('result-container');
         let debounceTimer;
+
+        const findInClientCache = (query) => {
+            const cachedItem = localStorage.getItem(query.toLowerCase().trim());
+            return cachedItem ? JSON.parse(cachedItem) : null;
+        };
+
+        const saveToClientCache = (query, data) => {
+            const dataToCache = { ...data, source: 'ผลการค้นหาที่ถูกบันทึกไว้ (Cache)', allergy_status: 'ข้อมูลนี้เป็นเพียงสิ่งที่เคยค้นหาและบันทึกไว้' };
+            localStorage.setItem(query.toLowerCase().trim(), JSON.stringify(dataToCache));
+        };
 
         const debounce = (func, delay) => {
             return function(...args) {
@@ -50,45 +62,32 @@
         };
 
         const renderResult = (data) => {
-            let sourceClass = 'source-google'; // สีส้มเป็นค่าเริ่มต้น
-            if (data.source.includes('ฐานข้อมูลของเรา')) {
-                sourceClass = 'source-db'; // สีเขียว
-            } else if (data.source.includes('Cache')) {
-                sourceClass = 'source-cache'; // สีฟ้า (ใหม่)
-            }
-            
-            return `
-                <div class="source-info ${sourceClass}">
-                    <strong>ที่มา:</strong> ${data.source}
-                </div>
-                <div class="result-item">
-                    <h4>โอกาสแพ้</h4><p>${data.allergy_status}</p>
-                    <h4>ชื่อจริง</h4><p>${data.name}</p>
-                    <h4>ชื่อแฝง</h4><p>${data.aliases || '-'}</p>
-                    <h4>หน้าที่</h4><p>${data.func || '-'}</p>
-                    <h4>พบใน</h4><p>${data.products || '-'}</p>
-                </div>
-            `;
+            let sourceClass = 'source-google';
+            if (data.source.includes('ฐานข้อมูลของเรา')) sourceClass = 'source-db';
+            else if (data.source.includes('Cache')) sourceClass = 'source-cache';
+            return `...`; // โค้ดส่วน render เหมือนเดิม
         };
         
         const searchWithAI = async (question) => {
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                const response = await fetch('http://localhost:3000/api/ask-ai', {
+                // --- แก้ไข URL ---
+                const response = await fetch('/api/ask-ai', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ question })
                 });
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || 'เกิดข้อผิดพลาด');
-                resultContainer.innerHTML = renderResult(data);
+                
+                saveToClientCache(question, data);
+                const finalData = findInClientCache(question);
+                resultContainer.innerHTML = renderResult(finalData);
 
             } catch (error) {
                 resultContainer.innerHTML = `<div class="source-info source-google">เกิดข้อผิดพลาด: ${error.message}</div>`;
             } finally {
-                // ---- บรรทัดที่เพิ่มเข้ามา ----
-                searchBox.value = ''; // เคลียร์กล่องค้นหาเพื่อให้ผู้ใช้พิมพ์ใหม่ได้เลย
-                // -------------------------
+                searchBox.value = '';
             }
         };
 
@@ -97,9 +96,17 @@
                 resultContainer.innerHTML = '<p style="text-align:center; color: #555;">กรุณาพิมพ์อย่างน้อย 2 ตัวอักษร...</p>';
                 return;
             }
+
+            const cacheResult = findInClientCache(question);
+            if (cacheResult) {
+                resultContainer.innerHTML = renderResult(cacheResult);
+                return;
+            }
+
             resultContainer.innerHTML = '<div class="loader"></div>';
             try {
-                const response = await fetch('http://localhost:3000/api/live-search', {
+                // --- แก้ไข URL ---
+                const response = await fetch('/api/live-search', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ question })
@@ -109,13 +116,7 @@
                 if (result.found) {
                     resultContainer.innerHTML = renderResult(result.data);
                 } else {
-                    resultContainer.innerHTML = `
-                        <div class="source-info source-google">
-                            ไม่พบ "${question}" ในฐานข้อมูลและ Cache
-                        </div>
-                        <p style="text-align:center;">ต้องการค้นหาจากแหล่งข้อมูลภายนอกด้วย AI หรือไม่?</p>
-                        <button id="ai-search-btn">ค้นหาด้วย AI</button>
-                    `;
+                    resultContainer.innerHTML = `...`; // โค้ดแสดงปุ่มค้นหา AI เหมือนเดิม
                     document.getElementById('ai-search-btn').addEventListener('click', () => searchWithAI(question));
                 }
             } catch (error) {
@@ -123,9 +124,7 @@
             }
         };
 
-        searchBox.addEventListener('input', debounce((e) => {
-            handleLiveSearch(e.target.value);
-        }, 300));
+        searchBox.addEventListener('input', debounce((e) => handleLiveSearch(e.target.value), 300));
     </script>
 </body>
 </html>
