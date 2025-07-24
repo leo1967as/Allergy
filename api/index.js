@@ -14,43 +14,95 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const DB_PATH = path.join('/tmp', 'allergens.db');
-const CACHE_DB_PATH = path.join('/tmp', 'cache.db'); // <-- เพิ่ม Path สำหรับ Cache DB
-let db , cacheDb;
+const DB_PATH = path.join(process.cwd(), 'allergens.db');
+const CACHE_DB_PATH = path.join(process.cwd(), 'cache.db');
+let db, cacheDb;
 
+// Initialize main database with data from CSV
 const initializeMainDb = () => new Promise((resolve, reject) => {
-    if (fs.existsSync(DB_PATH)) fs.unlinkSync(DB_PATH);
+    // Check if database already exists
+    if (fs.existsSync(DB_PATH)) {
+        console.log('Main DB already exists, using existing database.');
+        const existingDb = new sqlite3.Database(DB_PATH, (err) => {
+            if (err) return reject(err);
+            console.log('Main DB connected.');
+            resolve(existingDb);
+        });
+        return;
+    }
+
+    // Create new database if it doesn't exist
     const newDb = new sqlite3.Database(DB_PATH, (err) => {
         if (err) return reject(err);
-        newDb.run(`CREATE TABLE allergens (name TEXT UNIQUE, keywords TEXT, function TEXT, found_in TEXT)`, (err) => {
+        
+        // Create allergens table
+        newDb.run(`CREATE TABLE allergens (
+            name TEXT UNIQUE, 
+            keywords TEXT, 
+            function TEXT, 
+            found_in TEXT
+        )`, (err) => {
             if (err) return reject(err);
+            
             const csvPath = path.join(process.cwd(), 'allergens.csv');
             if (!fs.existsSync(csvPath)) return reject(new Error('allergens.csv not found'));
             
+            // Import data from CSV
             fs.createReadStream(csvPath)
               .pipe(csv())
-              .on('data', (row) => newDb.run(`INSERT OR IGNORE INTO allergens VALUES (?,?,?,?)`, [row.name, row.keywords, row.function, row.found_in]))
+              .on('data', (row) => {
+                  newDb.run(`INSERT OR IGNORE INTO allergens VALUES (?,?,?,?)`, 
+                  [row.name, row.keywords, row.function, row.found_in]);
+              })
               .on('end', () => {
-                  console.log('Main DB Initialized in /tmp.');
+                  console.log('Main DB Initialized.');
                   resolve(newDb);
+              })
+              .on('error', (error) => {
+                  reject(error);
               });
         });
     });
 });
 
+// Initialize cache database
+const initializeCacheDb = () => new Promise((resolve, reject) => {
+    const cacheDbPath = fs.existsSync(CACHE_DB_PATH) ? CACHE_DB_PATH : ':memory:';
+    const newCacheDb = new sqlite3.Database(cacheDbPath, (err) => {
+        if (err) return reject(err);
+        newCacheDb.run(`CREATE TABLE IF NOT EXISTS ai_cache (
+            query TEXT PRIMARY KEY, 
+            response TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )`, (err) => {
+            if (err) return reject(err);
+            console.log('Cache DB Initialized.');
+            resolve(newCacheDb);
+        });
+    });
+});
+
+// Middleware to ensure databases are initialized
 const ensureDbInitialized = async (req, res, next) => {
     try {
-        if (!db || !db.isReady) {
+        // Initialize main database if not already initialized
+        if (!db) {
             db = await initializeMainDb();
-            db.isReady = true;
+            // Create index for faster searching
+            db.run(`CREATE INDEX IF NOT EXISTS idx_allergens_name ON allergens (name)`);
+            db.run(`CREATE INDEX IF NOT EXISTS idx_allergens_keywords ON allergens (keywords)`);
         }
-        if (!cacheDb || !cacheDb.isReady) {
+        
+        // Initialize cache database if not already initialized
+        if (!cacheDb) {
             cacheDb = await initializeCacheDb();
-            cacheDb.isReady = true;
         }
     } catch (error) {
         console.error("Failed to initialize databases:", error);
-        return res.status(500).json({ error: "Database initialization failed.", details: error.message });
+        return res.status(500).json({ 
+            error: "Database initialization failed.", 
+            details: error.message 
+        });
     }
     next();
 };
@@ -95,17 +147,7 @@ async function generateStructuredAnswer(context, question) {
     }
 }
 
-// --- เพิ่มฟังก์ชันสำหรับสร้างฐานข้อมูล Cache ---
-const initializeCacheDb = () => new Promise((resolve, reject) => {
-    const newCacheDb = new sqlite3.Database(CACHE_DB_PATH, (err) => {
-        if (err) return reject(err);
-        newCacheDb.run(`CREATE TABLE IF NOT EXISTS ai_cache (query TEXT PRIMARY KEY, response TEXT)`, (err) => {
-            if (err) return reject(err);
-            console.log('Cache DB Initialized in /tmp.');
-            resolve(newCacheDb);
-        });
-    });
-});
+// The initializeCacheDb function is already defined above
 
 // --- API Endpoints ---
 
